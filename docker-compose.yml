@@ -1,0 +1,17 @@
+# This example is to show how to automatically stop the default web server when launching Docker containers.
+#
+# By default a web server will be started using script /var/www/server.php when a Docker container is booted. During
+# local development you might not want to have the web server running. In this case, please have environment variable
+# DISABLE_DEFAULT_SERVER set to "true" or 1.
+version: "3"
+
+services:
+  swoole_app:
+    image: anterisdev/laravel-swoole:latest
+    volumes:
+      - ./src:/srv/laravel
+    environment:
+      SWOOLE_WATCH: "yes"
+      APP_KEY: base64:1RfxZT785MHjMkAsIouOaukQHk77Ov+/0Y95EfHmhA8=
+    ports:
+      - 8001:8000

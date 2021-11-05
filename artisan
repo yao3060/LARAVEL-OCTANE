@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+
+docker-compose exec swoole_app ./html/artisan $@
