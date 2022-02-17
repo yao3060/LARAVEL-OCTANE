@@ -1,84 +1,305 @@
-FROM node:16-buster as node
-COPY ./src-laravel/src/package.json ./src-laravel/src/yarn.lock /app/
-WORKDIR /app
-RUN yarn
+# Accepted values: 8.1 - 8.0
+ARG PHP_VERSION=8.1
 
-# laravel-mix checks if it can find ./artisan in which case it sets publicPath = 'public'
-COPY ./src-laravel/src/webpack.mix.js ./src-laravel/src/webpack.config.js ./src-laravel/src/artisan /app/
-COPY ./src-laravel/src/resources /app/resources
-COPY ./src-laravel/src/public /app/public
-RUN yarn run production
+ARG COMPOSER_VERSION=2
 
+###########################################
+# PHP dependencies
+###########################################
 
-FROM nginx:1.19-alpine as nginx
-# copy NGINX configuration to image
-COPY ./src-laravel/.docker/nginx/etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf
-COPY ./src-laravel/.docker/nginx/etc/nginx/snippets/cors /etc/nginx/snippets/cors
-
-# copy src/public folder to NGINX
-COPY --from=node /app/public /var/www/html/public
-
-# set folder permissions
-RUN find /var/www/html -type d -exec chmod 755 {} \;
-
-
-
-FROM composer:2 as composer
-
+FROM composer:${COMPOSER_VERSION} as vendor
+WORKDIR /var/www/html
 # copy source code to image
-COPY ./src-laravel/src/composer.json ./src-laravel/src/composer.lock /app/
-RUN composer install --no-scripts --no-autoloader --no-dev --prefer-dist -vvv
+COPY ./src/composer.json ./src/composer.lock ./
+RUN composer install \
+    --no-scripts \
+    --no-dev \
+    --no-interaction \
+    --prefer-dist \
+    --ignore-platform-reqs \
+    --optimize-autoloader \
+    --apcu-autoloader \
+    --ansi
 
+###########################################
+# php image
+###########################################
+FROM php:${PHP_VERSION}-cli-buster as php
 
-FROM php:8-fpm-alpine as php
+LABEL maintainer="Seyed Morteza Ebadi <seyed.me720@gmail.com>"
 
-# add phpredis to php-available-exts (install in the next step)
-ENV PHPREDIS_VERSION 5.3.4
-RUN mkdir -p /usr/src/php/ext/redis \
-	&& curl -L https://github.com/phpredis/phpredis/archive/$PHPREDIS_VERSION.tar.gz | tar xvz -C /usr/src/php/ext/redis --strip 1 \
-	&& echo 'redis' >> /usr/src/php-available-exts
+ARG WWWUSER=1000
+ARG WWWGROUP=1000
+ARG TZ=UTC
 
-RUN sed -i "/dl-cdn.alpinelinux.org/s/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g" /etc/apk/repositories && cat /etc/apk/repositories
+# Accepted values: app - horizon
+ARG CONTAINER_MODE=app
 
-# install required php extensions
-RUN apk add --no-cache libzip-dev \
-    && docker-php-ext-install pdo pdo_mysql opcache zip bcmath redis \
-    && rm -rf /var/cache/apk/* /tmp/* \
-    && docker-php-source delete
+ARG APP_WITH_HORIZON=false
 
-# set recommended PHP.ini settings
-# see https://secure.php.net/manual/en/opcache.installation.php
-RUN { \
-		echo 'opcache.memory_consumption=128'; \
-		echo 'opcache.interned_strings_buffer=8'; \
-		echo 'opcache.max_accelerated_files=4000'; \
-		echo 'opcache.revalidate_freq=2'; \
-		echo 'opcache.fast_shutdown=1'; \
-		echo 'opcache.enable_cli=1'; \
-	} > /usr/local/etc/php/conf.d/opcache-recommended.ini
+ENV DEBIAN_FRONTEND=noninteractive \
+    TERM=xterm-color \
+    CONTAINER_MODE=${CONTAINER_MODE} \
+    APP_WITH_HORIZON=${APP_WITH_HORIZON}
 
-# copy PHP configuration to image
-COPY ./src-laravel/.docker/php/usr/local/etc/php/ /usr/local/etc/php/
-COPY ./src-laravel/.docker/php/usr/local/etc/php-fpm.d/ /usr/local/etc/php-fpm.d/
+WORKDIR /var/www/html
 
-# copy source code to image
-COPY --from=composer /app/vendor /var/www/html/vendor
-COPY --from=composer /usr/bin/composer /usr/bin/composer
-COPY --from=node /app/public /var/www/html/public
-COPY ./src-laravel/src /var/www/html
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
 
-RUN /usr/bin/composer dump-autoload
+RUN set -eu; \
+    apt-get update; \
+    apt-get upgrade -yqq; \
+    pecl channel-update pecl.php.net; \
+    apt-get install -yqq --no-install-recommends \
+          apt-utils \
+          gnupg \
+          gosu \
+          git \
+          curl \
+          libcurl4-openssl-dev \
+          ca-certificates \
+          supervisor \
+          libmemcached-dev \
+          libz-dev \
+          libbrotli-dev \
+          libpq-dev \
+          libjpeg-dev \
+          libpng-dev \
+          libfreetype6-dev \
+          libssl-dev \
+          libwebp-dev \
+          libmcrypt-dev \
+          libonig-dev \
+          libzip-dev zip unzip \
+          libargon2-1 \
+          libidn2-0 \
+          libpcre2-8-0 \
+          libpcre3 \
+          libxml2 \
+          libzstd1 \
+          procps
 
+###########################################
+# pdo_mysql
+###########################################
 
-# Run this after copy source to image instead of /start
-RUN touch /var/www/html/storage/logs/laravel.log /var/www/html/bootstrap/cache/services.php && \
-    chown -R :www-data /var/www/html/storage /var/www/html/bootstrap/cache && \
-    chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache && \
-    chmod +x /var/www/html/artisan
+RUN docker-php-ext-install pdo_mysql;
 
-# copy start script to image
-COPY ./src-laravel/.docker/php/start /start
-COPY ./src-laravel/.docker/php/init /init
+###########################################
+# zip
+###########################################
 
-# run start script on container startup
-CMD ["/start"]
+RUN docker-php-ext-configure zip && docker-php-ext-install zip;
+
+###########################################
+# mbstring
+###########################################
+
+RUN docker-php-ext-install mbstring;
+
+###########################################
+# GD
+###########################################
+
+RUN docker-php-ext-configure gd \
+            --prefix=/usr \
+            --with-jpeg \
+            --with-webp \
+            --with-freetype \
+    && docker-php-ext-install gd;
+
+###########################################
+# OPcache
+###########################################
+
+ARG INSTALL_OPCACHE=true
+
+RUN if [ ${INSTALL_OPCACHE} = true ]; then \
+      docker-php-ext-install opcache; \
+    fi
+
+###########################################
+# PHP Redis
+###########################################
+
+ARG INSTALL_PHPREDIS=true
+
+RUN if [ ${INSTALL_PHPREDIS} = true ]; then \
+      pecl install -o -f redis \
+      && rm -rf /tmp/pear \
+      && docker-php-ext-enable redis; \
+    fi
+
+###########################################
+# PCNTL
+###########################################
+
+ARG INSTALL_PCNTL=true
+
+RUN if [ ${INSTALL_PCNTL} = true ]; then \
+      docker-php-ext-install pcntl; \
+    fi
+
+###########################################
+# BCMath
+###########################################
+
+ARG INSTALL_BCMATH=true
+
+RUN if [ ${INSTALL_BCMATH} = true ]; then \
+      docker-php-ext-install bcmath; \
+  fi
+
+###########################################
+# RDKAFKA
+###########################################
+
+ARG INSTALL_RDKAFKA=true
+
+RUN if [ ${INSTALL_RDKAFKA} = true ]; then \
+      apt-get install -yqq librdkafka-dev \
+      && pecl install rdkafka \
+      && docker-php-ext-enable rdkafka; \
+  fi
+
+###########################################
+# Swoole extension
+###########################################
+
+ARG INSTALL_SWOOLE=true
+
+RUN set -eu; \
+    if [ ${INSTALL_SWOOLE} = true ]; then \
+      apt-get install -yqq libc-ares-dev \
+      && pecl install -D 'enable-openssl="yes" enable-http2="yes" enable-swoole-curl="yes" enable-mysqlnd="yes" enable-cares="yes"' swoole \
+      && docker-php-ext-enable swoole; \
+    fi
+
+###########################################################################
+# Human Language and Character Encoding Support
+###########################################################################
+
+ARG INSTALL_INTL=true
+
+RUN if [ ${INSTALL_INTL} = true ]; then \
+      apt-get install -yqq zlib1g-dev libicu-dev g++ \
+      && docker-php-ext-configure intl \
+      && docker-php-ext-install intl; \
+  fi
+
+###########################################
+# Memcached
+###########################################
+
+ARG INSTALL_MEMCACHED=false
+
+RUN if [ ${INSTALL_MEMCACHED} = true ]; then \
+      pecl -q install memcached && docker-php-ext-enable memcached; \
+  fi
+
+###########################################
+# MySQL Client
+###########################################
+
+ARG INSTALL_MYSQL_CLIENT=true
+
+RUN if [ ${INSTALL_MYSQL_CLIENT} = true ]; then \
+      apt-get install -yqq default-mysql-client; \
+  fi
+
+###########################################
+# pdo_pgsql
+###########################################
+
+ARG INSTALL_PDO_PGSQL=false
+
+RUN if [ ${INSTALL_PDO_PGSQL} = true ]; then \
+      docker-php-ext-install pdo_pgsql; \
+  fi
+
+###########################################
+# pgsql
+###########################################
+
+ARG INSTALL_PGSQL=false
+
+RUN if [ ${INSTALL_PGSQL} = true ]; then \
+      docker-php-ext-install pgsql; \
+  fi
+
+###########################################
+# pgsql client and postgis
+###########################################
+
+ARG INSTALL_PG_CLIENT=false
+ARG INSTALL_POSTGIS=false
+
+RUN if [ ${INSTALL_PG_CLIENT} = true ]; then \
+      . /etc/os-release \
+      && echo "deb http://apt.postgresql.org/pub/repos/apt $VERSION_CODENAME-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+      && curl -sL https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \
+      && apt-get install -yqq postgresql-client-12 postgis; \
+      if [ ${INSTALL_POSTGIS} = true ]; then \
+        apt-get install -yqq postgis; \
+      fi; \
+    fi
+
+###########################################
+# install node for watch
+###########################################
+
+# This really shouldn't be modified, so we aren't advertising the env variable.
+# It allows us to globally install chokidar without modifying the Laravel package.json.
+ENV NODE_PATH "/home/www-data/.npm-global/lib/node_modules"
+
+RUN apt-get install -yqq nodejs npm && \
+    mkdir -p "/home/www-data/.npm-global/" && \
+    npm config set prefix "/home/www-data/.npm-global/" && \
+    npm install -g chokidar
+
+###########################################
+
+RUN groupadd --force -g $WWWGROUP octane \
+    && useradd -ms /bin/bash --no-user-group -g $WWWGROUP -u $WWWUSER octane
+
+RUN apt-get clean \
+    && docker-php-source delete \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && rm /var/log/lastlog /var/log/faillog
+
+COPY ./src .
+COPY --from=vendor /var/www/html/vendor vendor
+
+RUN mkdir -p \
+  storage/framework/{sessions,views,cache} \
+  storage/logs \
+  bootstrap/cache \
+  && chown -R octane:octane \
+  storage \
+  bootstrap/cache \
+  && chmod -R ug+rwx storage bootstrap/cache
+
+COPY .docker/octane/supervisord.${CONTAINER_MODE}.conf /etc/supervisor/conf.d/supervisord.${CONTAINER_MODE}.conf
+COPY .docker/octane/php.ini /usr/local/etc/php/conf.d/octane.ini
+COPY .docker/octane/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+
+COPY .docker/octane/entrypoint.sh /entrypoint.sh
+COPY .docker/octane/utilities.sh /utilities.sh
+
+RUN chmod +x /entrypoint.sh
+RUN cat /utilities.sh >> ~/.bashrc
+
+EXPOSE 9000
+
+# Allow the user to specify Swoole options via ENV variables.
+ENV SWOOLE_MAX_REQUESTS "500"
+ENV SWOOLE_TASK_WORKERS "auto"
+ENV SWOOLE_WATCH $false
+ENV SWOOLE_WORKERS "auto"
+
+RUN echo $SWOOLE_WATCH
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+HEALTHCHECK --start-period=8s --interval=5s --timeout=5s CMD php artisan octane:status || exit 1

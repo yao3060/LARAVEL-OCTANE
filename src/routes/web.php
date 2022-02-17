@@ -16,3 +16,9 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', function () {
     return view('welcome');
 });
+
+
+Route::get('/json', [App\Http\Controllers\Api\BaseController::class, 'index']);
+
+Route::get('/token', [App\Http\Controllers\Api\AuthController::class, 'login']);
+

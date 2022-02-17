@@ -1,17 +1,51 @@
-# This example is to show how to automatically stop the default web server when launching Docker containers.
-#
-# By default a web server will be started using script /var/www/server.php when a Docker container is booted. During
-# local development you might not want to have the web server running. In this case, please have environment variable
-# DISABLE_DEFAULT_SERVER set to "true" or 1.
-version: "3"
+version: "3.9"
 
 services:
-  swoole_app:
-    image: anterisdev/laravel-swoole:latest
+  app:
+    container_name: laravel_octane_php
+    # image: anterisdev/laravel-swoole:latest
+    build:
+      context: .
+      dockerfile: ./.docker/Dockerfile
+      target: php
     volumes:
-      - ./src:/srv/laravel
+      - ./src:/var/www/html:delegated
+    env_file: .env
     environment:
+      APP_DEBUG: "true"
+      XDEBUG_MODE: "debug"
       SWOOLE_WATCH: "yes"
-      APP_KEY: base64:1RfxZT785MHjMkAsIouOaukQHk77Ov+/0Y95EfHmhA8=
+      APP_KEY: "base64:cLrR/eyzu2INrh1r+s9h3uNM4plUmBrYqDyh+D7v6GY="
+      CHOKIDAR_USEPOLLING: 'true'
+    depends_on:
+      - cache
+      - db
     ports:
-      - 8001:8000
+      - 8001:9000
+
+  db:
+    image: mysql:8
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    environment:
+      - MYSQL_DATABASE=domain
+      - MYSQL_ROOT_PASSWORD=root
+    volumes:
+      - db:/var/lib/mysql
+
+  cache:
+    image: redis:alpine
+    restart: always
+
+  adminer:
+    image: adminer
+    restart: always
+    environment:
+      - ADMINER_DEFAULT_SERVER=db
+    depends_on:
+      - db
+    ports:
+      - "9090:8080"
+
+volumes:
+  db:
