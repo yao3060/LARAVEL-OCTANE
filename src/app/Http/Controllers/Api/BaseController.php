@@ -6,11 +6,7 @@ class BaseController {
 
     public function index()
     {
-        return response()->json([
-            'name' => 'Abigail',
-            'state' => 'CA',
-            'country' => 'US',
-        ]);
+        return response()->json(range(1,100));
     }
 
 }

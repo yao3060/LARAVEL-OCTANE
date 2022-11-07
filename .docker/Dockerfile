@@ -202,7 +202,7 @@ RUN if [ ${INSTALL_MEMCACHED} = true ]; then \
 # MySQL Client
 ###########################################
 
-ARG INSTALL_MYSQL_CLIENT=true
+ARG INSTALL_MYSQL_CLIENT=false
 
 RUN if [ ${INSTALL_MYSQL_CLIENT} = true ]; then \
       apt-get install -yqq default-mysql-client; \
@@ -253,7 +253,9 @@ RUN if [ ${INSTALL_PG_CLIENT} = true ]; then \
 # It allows us to globally install chokidar without modifying the Laravel package.json.
 ENV NODE_PATH "/home/www-data/.npm-global/lib/node_modules"
 
-RUN apt-get install -yqq nodejs npm && \
+RUN curl -sL https://deb.nodesource.com/setup_16.x -o /tmp/nodesource_setup.sh && \
+    bash /tmp/nodesource_setup.sh && \
+    apt-get install -yqq nodejs npm && \
     mkdir -p "/home/www-data/.npm-global/" && \
     npm config set prefix "/home/www-data/.npm-global/" && \
     npm install -g chokidar

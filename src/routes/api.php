@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Procedures\TennisProcedure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -26,5 +27,6 @@ Route::get('/', function () {
     return $_SERVER;
 });
 
-
+//curl 'http://127.0.0.1:8001/api/v1/endpoint' --data-binary '{"jsonrpc":"2.0","method":"tennis@ping","id":1}'
+Route::rpc('/v1/endpoint', [TennisProcedure::class])->name('rpc.endpoint');
 
