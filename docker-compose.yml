@@ -16,7 +16,7 @@ services:
       XDEBUG_MODE: "debug"
       SWOOLE_WATCH: "yes"
       APP_KEY: "base64:cLrR/eyzu2INrh1r+s9h3uNM4plUmBrYqDyh+D7v6GY="
-      CHOKIDAR_USEPOLLING: 'true'
+      CHOKIDAR_USEPOLLING: "true"
     depends_on:
       - cache
       - db
@@ -45,7 +45,17 @@ services:
     depends_on:
       - db
     ports:
-      - "9090:8080"
+      - "8081:8080"
+
+  phpredisadmin:
+    image: erikdubbelboer/phpredisadmin
+    environment:
+      - REDIS_1_HOST=cache
+      - REDIS_1_PORT=6379
+    depends_on:
+      - cache
+    ports:
+      - "8082:80"
 
 volumes:
   db:
